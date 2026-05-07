@@ -34,33 +34,36 @@ implementation("io.github.brunovsiqueira:vigil:0.1.0")
 
 ## Quick Start
 
-One line. All detectors run by default.
+One line. All detectors run by default. Call from anywhere -- Vigil handles threading.
 
 ```kotlin
-// From a coroutine scope (ViewModel, lifecycleScope, etc.)
-val safe = Vigil.isDeviceSafe(context)
+Vigil.isDeviceSafe(context) { safe ->
+    if (!safe) {
+        // device is tampered -- block access, log, or degrade
+    }
+}
 ```
 
-That's it. `safe` is `true` if the environment looks clean, `false` if tampering is detected.
+That's it. The callback is always delivered on the main thread.
 
-### Blocking (Java interop)
+### Java
 
-```kotlin
-// From a background thread -- do NOT call on the main thread
-val safe = Vigil.isDeviceSafeSync(context)
+```java
+Vigil.isDeviceSafe(context, config -> {}, safe -> {
+    if (!safe) finish();
+});
 ```
 
 ### Configuration
 
-Opt out of checks you don't need, or provide your signing certificate for integrity verification:
+Opt out of checks or enable deep scanning:
 
 ```kotlin
-val safe = Vigil.isDeviceSafe(context) {
+Vigil.isDeviceSafe(context, config = {
+    deepScan = true                       // +2s, catches property-spoofing emulators
     skip(DetectionCategory.ROOT)          // opt out of root detection
-    skip(DetectionCategory.EMULATOR)      // opt out of emulator detection
-    includeSensorAnalysis = false         // faster (~50ms vs ~2s)
-    signingCertSha256 = "abc123..."       // enable signing cert check
-}
+    signingCertSha256 = "abc123..."       // enable signing cert verification
+}) { safe -> }
 ```
 
 ### Detailed result
@@ -68,19 +71,28 @@ val safe = Vigil.isDeviceSafe(context) {
 When you need per-category breakdown:
 
 ```kotlin
-val result = Vigil.evaluate(context)
+Vigil.evaluate(context) { result ->
+    result.isSafe      // Boolean
+    result.status      // SECURE, WARNING, or TAMPERED
+    result.score       // 0.0 to 1.0
+    result.durationMs  // total check time
 
-result.isSafe      // Boolean
-result.status      // SECURE, WARNING, or TAMPERED
-result.score       // 0.0 to 1.0
-result.durationMs  // total check time
-result.details     // Map<DetectionCategory, DetectionResult>
+    result.details.forEach { (category, detection) ->
+        detection.evidence
+            .filter { it.suspicious }
+            .forEach { Log.w("Vigil", "${category.displayName}: ${it.description}") }
+    }
+}
+```
 
-// Inspect individual evidence
-result.details.forEach { (category, detection) ->
-    detection.evidence
-        .filter { it.suspicious }
-        .forEach { Log.w("Vigil", "${category.displayName}: ${it.description}") }
+### Kotlin coroutines
+
+Suspend overloads are available for coroutine users:
+
+```kotlin
+lifecycleScope.launch {
+    val safe = Vigil.isDeviceSafe(context)
+    val result = Vigil.evaluate(context) { deepScan = true }
 }
 ```
 

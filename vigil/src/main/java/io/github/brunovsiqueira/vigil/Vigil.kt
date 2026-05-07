@@ -1,93 +1,144 @@
 package io.github.brunovsiqueira.vigil
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import io.github.brunovsiqueira.vigil.detectors.CloningDetector
 import io.github.brunovsiqueira.vigil.detectors.EmulatorDetector
 import io.github.brunovsiqueira.vigil.detectors.HookingDetector
 import io.github.brunovsiqueira.vigil.detectors.IntegrityDetector
 import io.github.brunovsiqueira.vigil.detectors.RootDetector
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Main entry point for Vigil environment integrity checks.
  *
- * **Simple usage** — one line, all detectors, boolean result:
+ * **Simple usage** — one line, callback, works from anywhere:
  * ```kotlin
- * val safe = Vigil.isDeviceSafe(context)
+ * Vigil.isDeviceSafe(context) { safe ->
+ *     if (!safe) finish()
+ * }
  * ```
  *
- * **With configuration** — opt out of specific checks:
+ * **With configuration** — opt out of checks or enable deep scanning:
  * ```kotlin
- * val safe = Vigil.isDeviceSafe(context) {
+ * Vigil.isDeviceSafe(context, config = {
+ *     deepScan = true
  *     skip(DetectionCategory.ROOT)
- *     signingCertSha256 = "your-cert-sha256"
- * }
+ * }) { safe -> }
  * ```
  *
  * **Detailed result** — when you need per-category breakdown:
  * ```kotlin
- * val result = Vigil.evaluate(context)
- * if (!result.isSafe) {
- *     result.details.forEach { (category, detection) ->
- *         // inspect per-category evidence
- *     }
+ * Vigil.evaluate(context) { result ->
+ *     result.isSafe
+ *     result.details.forEach { (category, detection) -> }
  * }
  * ```
  *
- * **Blocking (Java interop):**
+ * **Kotlin coroutines** — suspend overloads for coroutine users:
  * ```kotlin
- * val safe = Vigil.isDeviceSafeSync(context)
+ * val safe = Vigil.isDeviceSafe(context)
+ * val result = Vigil.evaluate(context)
  * ```
  */
 object Vigil {
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // ─── Callback API (primary — works from anywhere) ────────────
+
     /**
      * Checks whether the device environment is safe.
      *
-     * Runs all detectors concurrently and returns `true` if no tampering is detected.
-     * This is a suspend function — call from a coroutine scope.
+     * Runs all detectors in the background and delivers the result on the main thread.
+     * Safe to call from any thread, including the main thread.
      *
      * @param context Application or Activity context.
-     * @param configure Optional configuration block to skip categories or set parameters.
-     * @return `true` if the environment appears safe, `false` if tampering is detected.
+     * @param config Optional configuration block to skip categories or set parameters.
+     * @param onResult Callback with `true` if the environment appears safe,
+     *   `false` if tampering is detected. Always called on the main thread.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun isDeviceSafe(
+        context: Context,
+        config: VigilConfig.() -> Unit = {},
+        onResult: (Boolean) -> Unit,
+    ) {
+        scope.launch {
+            val result = runEvaluation(context, config)
+            mainHandler.post { onResult(result.isSafe) }
+        }
+    }
+
+    /**
+     * Runs all detectors and delivers a detailed [VigilResult] on the main thread.
+     *
+     * Use this when you need per-category breakdown, confidence scores,
+     * or individual evidence items.
+     *
+     * @param context Application or Activity context.
+     * @param config Optional configuration block.
+     * @param onResult Callback with the full result. Always called on the main thread.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun evaluate(
+        context: Context,
+        config: VigilConfig.() -> Unit = {},
+        onResult: (VigilResult) -> Unit,
+    ) {
+        scope.launch {
+            val result = runEvaluation(context, config)
+            mainHandler.post { onResult(result) }
+        }
+    }
+
+    // ─── Suspend API (for Kotlin coroutine users) ────────────────
+
+    /**
+     * Suspend version of [isDeviceSafe] for Kotlin coroutine users.
+     *
+     * ```kotlin
+     * lifecycleScope.launch {
+     *     val safe = Vigil.isDeviceSafe(context)
+     * }
+     * ```
      */
     suspend fun isDeviceSafe(
         context: Context,
-        configure: VigilConfig.() -> Unit = {},
+        config: VigilConfig.() -> Unit = {},
     ): Boolean {
-        return evaluate(context, configure).isSafe
+        return runEvaluation(context, config).isSafe
     }
 
     /**
-     * Blocking version of [isDeviceSafe] for Java interop or non-coroutine contexts.
+     * Suspend version of [evaluate] for Kotlin coroutine users.
      *
-     * Runs all detectors and blocks the calling thread until complete.
-     * Do not call on the main thread — this will cause an ANR.
-     *
-     * @param context Application or Activity context.
-     * @param configure Optional configuration block.
-     * @return `true` if the environment appears safe, `false` if tampering is detected.
-     */
-    fun isDeviceSafeSync(
-        context: Context,
-        configure: VigilConfig.() -> Unit = {},
-    ): Boolean {
-        return runBlocking { isDeviceSafe(context, configure) }
-    }
-
-    /**
-     * Runs all detectors and returns a detailed [VigilResult].
-     *
-     * Use this when you need per-category breakdown, confidence scores,
-     * or individual evidence items. For a simple boolean, use [isDeviceSafe].
-     *
-     * @param context Application or Activity context.
-     * @param configure Optional configuration block.
-     * @return A [VigilResult] with overall status, score, and per-category details.
+     * ```kotlin
+     * lifecycleScope.launch {
+     *     val result = Vigil.evaluate(context)
+     *     if (!result.isSafe) { /* ... */ }
+     * }
+     * ```
      */
     suspend fun evaluate(
         context: Context,
-        configure: VigilConfig.() -> Unit = {},
+        config: VigilConfig.() -> Unit = {},
+    ): VigilResult {
+        return runEvaluation(context, config)
+    }
+
+    // ─── Internal ────────────────────────────────────────────────
+
+    private suspend fun runEvaluation(
+        context: Context,
+        configure: VigilConfig.() -> Unit,
     ): VigilResult {
         val config = VigilConfig().apply(configure)
         val engine = buildEngine(config)
@@ -100,7 +151,7 @@ object Vigil {
 
         if (DetectionCategory.EMULATOR !in config.skippedCategories) {
             builder.addDetector(EmulatorDetector(
-                includeSensorAnalysis = config.includeSensorAnalysis,
+                includeSensorAnalysis = config.deepScan,
             ))
         }
 

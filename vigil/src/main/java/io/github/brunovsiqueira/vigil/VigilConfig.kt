@@ -4,17 +4,30 @@ package io.github.brunovsiqueira.vigil
  * Configuration for Vigil checks.
  *
  * All detectors run by default. Use [skip] to opt out of specific categories.
+ * Sensor noise analysis is off by default for fast checks (~100ms).
+ * Enable [deepScan] for thorough emulator detection (~2.5s).
  *
  * ```kotlin
- * Vigil.isDeviceSafe(context) {
- *     skip(DetectionCategory.ROOT)
- *     signingCertSha256 = "your-cert-hash"
+ * Vigil.isDeviceSafe(context) { safe ->
+ *     // all checks, fast by default
  * }
+ *
+ * Vigil.isDeviceSafe(context, config = {
+ *     deepScan = true
+ *     signingCertSha256 = "your-cert-hash"
+ * }) { safe -> }
  * ```
  */
 class VigilConfig internal constructor() {
 
     internal val skippedCategories = mutableSetOf<DetectionCategory>()
+
+    /**
+     * When `true`, includes accelerometer/gyroscope noise analysis in emulator detection.
+     * This adds ~2 seconds but catches emulators that spoof Build properties.
+     * Default: `false` (fast mode).
+     */
+    var deepScan: Boolean = false
 
     /**
      * Expected SHA-256 hash of the app's signing certificate.
@@ -30,13 +43,6 @@ class VigilConfig internal constructor() {
      * When empty (default), the DEX integrity check is skipped.
      */
     var expectedDexCrcs: Map<String, Long> = emptyMap()
-
-    /**
-     * Whether to include accelerometer/gyroscope noise analysis in emulator detection.
-     * This adds ~2 seconds to the check but catches emulators with spoofed Build properties.
-     * Default: true.
-     */
-    var includeSensorAnalysis: Boolean = true
 
     /**
      * Opt out of a detection category. All categories run by default.

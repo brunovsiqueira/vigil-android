@@ -2,15 +2,12 @@ package io.github.brunovsiqueira.vigil.sample
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.viewModelScope
-import io.github.brunovsiqueira.vigil.DetectionCategory
 import io.github.brunovsiqueira.vigil.Vigil
 import io.github.brunovsiqueira.vigil.VigilResult
 import io.github.brunovsiqueira.vigil.util.DetectionLogger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -21,19 +18,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _uiState = MutableStateFlow<ScanState>(ScanState.Idle)
     val uiState: StateFlow<ScanState> = _uiState.asStateFlow()
 
-    fun runFastScan() = runScan(includeSensorAnalysis = false)
-
-    fun runThoroughScan() = runScan(includeSensorAnalysis = true)
-
-    private fun runScan(includeSensorAnalysis: Boolean) {
+    fun runFastScan() {
         if (_uiState.value is ScanState.Scanning) return
         _uiState.value = ScanState.Scanning
 
-        viewModelScope.launch {
-            val result = Vigil.evaluate(getApplication()) {
-                this.includeSensorAnalysis = includeSensorAnalysis
-                signingCertSha256 = DEBUG_SIGNING_CERT_SHA256
-            }
+        Vigil.evaluate(getApplication(), config = {
+            signingCertSha256 = DEBUG_SIGNING_CERT_SHA256
+        }) { result ->
+            _uiState.value = ScanState.Complete(result)
+        }
+    }
+
+    fun runThoroughScan() {
+        if (_uiState.value is ScanState.Scanning) return
+        _uiState.value = ScanState.Scanning
+
+        Vigil.evaluate(getApplication(), config = {
+            deepScan = true
+            signingCertSha256 = DEBUG_SIGNING_CERT_SHA256
+        }) { result ->
             _uiState.value = ScanState.Complete(result)
         }
     }
