@@ -2,7 +2,13 @@
 # Only keep the PUBLIC API surface — internal detection logic gets obfuscated.
 # Source: https://developer.android.com/topic/performance/app-optimization/library-optimization
 
-# Public API — data classes accessed by the consuming app's UI
+# Public API — main entry point
+-keep class io.github.brunovsiqueira.vigil.Vigil { public *; }
+-keep class io.github.brunovsiqueira.vigil.VigilConfig { public *; }
+-keep class io.github.brunovsiqueira.vigil.VigilResult { *; }
+-keep class io.github.brunovsiqueira.vigil.VigilResult$Companion { *; }
+
+# Advanced API — engine and builder
 -keep class io.github.brunovsiqueira.vigil.VigilEngine { public *; }
 -keep class io.github.brunovsiqueira.vigil.VigilEngine$Builder { public *; }
 -keep class io.github.brunovsiqueira.vigil.DetectionResult { *; }

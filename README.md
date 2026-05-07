@@ -34,35 +34,53 @@ implementation("io.github.brunovsiqueira:vigil:0.1.0")
 
 ## Quick Start
 
+One line. All detectors run by default.
+
 ```kotlin
-// 1. Build the engine with the detectors you need
-val engine = VigilEngine.Builder()
-    .addDetector(EmulatorDetector(includeSensorAnalysis = true))
-    .addDetector(CloningDetector())
-    .addDetector(IntegrityDetector(
-        expectedSigningCertSha256 = "your-cert-sha256-here",
-    ))
-    .addDetector(HookingDetector())
-    .build()
+// From a coroutine scope (ViewModel, lifecycleScope, etc.)
+val safe = Vigil.isDeviceSafe(context)
+```
 
-// 2. Evaluate (suspend function -- call from a coroutine scope)
-val verdict: TamperVerdict = engine.evaluate(applicationContext)
+That's it. `safe` is `true` if the environment looks clean, `false` if tampering is detected.
 
-// 3. Check the overall status
-when (verdict.status) {
-    TamperStatus.SECURE  -> { /* Environment appears genuine */ }
-    TamperStatus.WARNING -> { /* Weak signals detected */ }
-    TamperStatus.TAMPERED -> { /* Strong signals detected */ }
+### Blocking (Java interop)
+
+```kotlin
+// From a background thread -- do NOT call on the main thread
+val safe = Vigil.isDeviceSafeSync(context)
+```
+
+### Configuration
+
+Opt out of checks you don't need, or provide your signing certificate for integrity verification:
+
+```kotlin
+val safe = Vigil.isDeviceSafe(context) {
+    skip(DetectionCategory.ROOT)          // opt out of root detection
+    skip(DetectionCategory.EMULATOR)      // opt out of emulator detection
+    includeSensorAnalysis = false         // faster (~50ms vs ~2s)
+    signingCertSha256 = "abc123..."       // enable signing cert check
 }
+```
 
-// 4. Inspect per-category results and evidence
-verdict.results.forEach { (category, result) ->
-    result.evidence
+### Detailed result
+
+When you need per-category breakdown:
+
+```kotlin
+val result = Vigil.evaluate(context)
+
+result.isSafe      // Boolean
+result.status      // SECURE, WARNING, or TAMPERED
+result.score       // 0.0 to 1.0
+result.durationMs  // total check time
+result.details     // Map<DetectionCategory, DetectionResult>
+
+// Inspect individual evidence
+result.details.forEach { (category, detection) ->
+    detection.evidence
         .filter { it.suspicious }
-        .forEach { evidence ->
-            Log.w("Security", "${category.displayName}: ${evidence.description}")
-            Log.d("Security", "  raw=${evidence.rawValue}")
-        }
+        .forEach { Log.w("Vigil", "${category.displayName}: ${it.description}") }
 }
 ```
 

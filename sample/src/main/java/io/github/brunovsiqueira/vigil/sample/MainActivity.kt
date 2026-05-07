@@ -45,7 +45,7 @@ import io.github.brunovsiqueira.vigil.DetectionCategory
 import io.github.brunovsiqueira.vigil.DetectionResult
 import io.github.brunovsiqueira.vigil.Evidence
 import io.github.brunovsiqueira.vigil.TamperStatus
-import io.github.brunovsiqueira.vigil.TamperVerdict
+import io.github.brunovsiqueira.vigil.VigilResult
 import io.github.brunovsiqueira.vigil.sample.ui.theme.AntiTamperingAppTheme
 
 class MainActivity : ComponentActivity() {
@@ -115,7 +115,7 @@ private fun DashboardScreen(
                     }
                 }
                 is ScanState.Complete -> {
-                    VerdictHeader(state.verdict)
+                    VerdictHeader(state.result)
                     Spacer(Modifier.height(12.dp))
                     ScanButtons(onFastScanClick, onThoroughScanClick)
                 }
@@ -123,13 +123,13 @@ private fun DashboardScreen(
         }
 
         if (state is ScanState.Complete) {
-            val verdict = state.verdict
+            val result = state.result
 
-            items(verdict.results.entries.toList()) { (category, result) ->
-                CategoryCard(category, result)
+            items(result.details.entries.toList()) { (category, detection) ->
+                CategoryCard(category, detection)
             }
 
-            if (verdict.errors.isNotEmpty()) {
+            if (result.errors.isNotEmpty()) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -138,11 +138,11 @@ private fun DashboardScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                "Errors (${verdict.errors.size})",
+                                "Errors (${result.errors.size})",
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
-                            verdict.errors.forEach { error ->
+                            result.errors.forEach { error ->
                                 Text(
                                     text = error.toString(),
                                     style = MaterialTheme.typography.bodySmall,
@@ -158,7 +158,7 @@ private fun DashboardScreen(
 
             item {
                 Text(
-                    text = "Scan completed in ${verdict.durationMs}ms",
+                    text = "Scan completed in ${result.durationMs}ms",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
@@ -199,14 +199,14 @@ private fun ScanButtons(
 }
 
 @Composable
-private fun VerdictHeader(verdict: TamperVerdict) {
-    val statusColor = when (verdict.status) {
+private fun VerdictHeader(result: VigilResult) {
+    val statusColor = when (result.status) {
         TamperStatus.SECURE -> Color(0xFF4CAF50)
         TamperStatus.WARNING -> Color(0xFFFF9800)
         TamperStatus.TAMPERED -> Color(0xFFF44336)
     }
     val animatedColor by animateColorAsState(statusColor, label = "statusColor")
-    val animatedScore by animateFloatAsState(verdict.overallScore, label = "score")
+    val animatedScore by animateFloatAsState(result.score, label = "score")
 
     Card(
         colors = CardDefaults.cardColors(containerColor = animatedColor.copy(alpha = 0.12f)),
@@ -226,16 +226,16 @@ private fun VerdictHeader(verdict: TamperVerdict) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = verdict.status.displayName,
+                text = result.status.displayName,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 color = animatedColor,
             )
             Spacer(Modifier.height(4.dp))
-            val detectedCount = verdict.results.values.count { it.detected }
-            val totalCount = verdict.results.size
+            val detectedCount = result.details.values.count { it.detected }
+            val totalCount = result.details.size
             Text(
-                text = when (verdict.status) {
+                text = when (result.status) {
                     TamperStatus.TAMPERED -> "$detectedCount of $totalCount categories flagged"
                     TamperStatus.WARNING -> "Some suspicious signals detected"
                     TamperStatus.SECURE -> "No anomalies detected"
