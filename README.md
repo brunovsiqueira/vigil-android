@@ -2,24 +2,25 @@
 
 Runtime environment integrity SDK for Android.
 
-Vigil detects emulators, app cloning, repackaging, hooking frameworks, and root at runtime. It gives your app structured, evidence-based verdicts so you can decide how to respond -- without binary blobs, telemetry, or closed-source dependencies.
+Vigil detects emulators, app cloning, repackaging, hooking frameworks, and root at runtime. It gives your app structured, evidence-based results so you can decide how to respond.
+
+Fully open source. No binary blobs. No telemetry. No network calls.
 
 ## Features
 
-- **Emulator Detection** -- 9 check groups including accelerometer/gyroscope noise analysis and GL renderer fingerprinting. Catches spoofed Build properties via sensor physics that cannot be faked in software.
-- **App Cloning Detection** -- 7 checks including ArtMethod `hotness_count` inspection (Matrioska, ACSAC 2024). Detects virtual containers like Parallel Space and VirtualApp through filesystem, memory map, and ART runtime analysis.
-- **App Integrity** -- Signing certificate SHA-256 verification, DEX file CRC validation, debug flag detection, and installer source verification. Cryptographically detects repackaged APKs.
-- **Hooking Detection** -- Frida agent/gadget detection via `/proc/self/maps`, Xposed/LSPosed/EdXposed class probing, `rwxp` memory segment analysis, Frida port scanning, and JDWP/ptrace debugger detection.
-- **Root Detection** -- SU binary detection, Magisk/KernelSU/APatch artifact scanning, SELinux status verification, and system partition integrity checks.
+- **Emulator Detection** -- 9 check groups including accelerometer/gyroscope noise analysis and GL renderer fingerprinting.
+- **App Cloning Detection** -- 7 checks including ArtMethod `hotness_count` inspection (based on Matrioska, ACSAC 2024). Detects virtual containers like Parallel Space and VirtualApp.
+- **App Integrity** -- Signing certificate SHA-256 verification, DEX file CRC validation, debug flag detection, and installer source verification.
+- **Hooking Detection** -- Frida detection via `/proc/self/maps`, Xposed/LSPosed class probing, `rwxp` memory segment analysis, Frida port scanning, and debugger detection.
+- **Root Detection** -- 11 checks including SU binaries, Magisk/KernelSU/APatch artifacts, overlayfs mount analysis, mount namespace comparison, and APatch syscall probing. Advanced checks use native C with direct syscalls.
 
-## Key Differentiators
+## Design Goals
 
-- State-of-the-art ArtMethod `hotness_count` check (Matrioska, ACSAC 2024) -- not found in any other open-source SDK
-- Two-tier confidence scoring: hard signals (deterministic, zero false positives) trigger instant detection; soft signals use weighted scoring as fallback when hard signals are spoofed
-- Evidence-based reporting -- every check returns structured `Evidence` with check name, description, raw value, and suspicion flag. No opaque booleans.
-- Modular architecture -- use only the detectors you need. Each implements the `TamperDetector` interface and runs independently.
-- Concurrent execution -- all detectors run in parallel on `Dispatchers.Default` with independent error isolation. A failing detector degrades the verdict rather than crashing the engine.
-- 100% open source. No binary blobs. No telemetry. No network calls.
+- **Two-tier confidence scoring** -- strong signals trigger immediate detection; weaker signals contribute to a weighted score. See the Architecture section for details.
+- **Evidence-based reporting** -- every check returns structured `Evidence` with check name, description, raw value, and suspicion flag.
+- **Modular** -- use only the detectors you need. Each implements the `TamperDetector` interface and runs independently.
+- **Concurrent** -- all detectors run in parallel with independent error isolation. A failing detector degrades the verdict rather than crashing the engine.
+- **Native C layer** -- critical `/proc` reads use direct syscalls (`__NR_openat`, `__NR_read`) to make hooking harder. Not foolproof, but raises the bar significantly vs Java I/O.
 
 ## Installation
 
@@ -75,7 +76,7 @@ apksigner verify --print-certs app-release.apk | grep SHA-256
 
 Vigil uses the **Strategy pattern**. Each detector implements the `TamperDetector` interface and is registered with `VigilEngine.Builder`. The engine runs all detectors concurrently via Kotlin coroutines, collects their `DetectionResult` outputs, and aggregates them into a single `TamperVerdict`.
 
-**Scoring model:** Each detector computes confidence independently using a two-tier system. Tier 1 (hard signals) are deterministic checks with zero documented false positives -- if any fires, confidence is 1.0. Tier 2 (soft signals) uses weighted scoring across check groups as a fallback layer. The engine then computes a weighted average across all detector confidences to produce the overall score, which maps to `SECURE`, `WARNING`, or `TAMPERED`.
+**Scoring model:** Each detector computes confidence independently using two tiers. Tier 1 ("hard signals") are checks that the authors consider high-confidence -- if any fires, the detector's confidence is set to 1.0. Tier 2 ("soft signals") uses weighted scoring across check groups. The engine computes a weighted average across all detectors to produce the overall score, which maps to `SECURE`, `WARNING`, or `TAMPERED`. Thresholds and weights are configurable.
 
 **Error handling:** Fail-open. Each check is wrapped in `SafeExec` so that a single failing check (e.g., permission denied) produces a `DetectionError` in the result rather than crashing the detector or the engine.
 
@@ -83,58 +84,58 @@ Vigil uses the **Strategy pattern**. Each detector implements the `TamperDetecto
 
 ### Emulator Detection (9 check groups)
 
-| Check | Signal Tier | Description |
+| Check | Confidence | Description |
 |-------|-------------|-------------|
 | Build properties | Soft (0.7) | HARDWARE, FINGERPRINT, DEVICE, MODEL, PRODUCT, MANUFACTURER |
 | System properties | Soft (0.6) | `ro.kernel.qemu`, `ro.hardware`, `init.svc.qemud` |
-| Sensor hardware strings | **Hard** | "Goldfish" sensor name, AOSP vendor string |
+| Sensor hardware strings | High | "Goldfish" sensor name, AOSP vendor string |
 | Sensor absence | Soft (0.5) | Missing step counter / significant motion sensor |
 | Sensor noise analysis | Soft (0.8) | Accelerometer/gyroscope stddev below MEMS noise floor |
 | Battery profile | Soft (0.85) | Temperature = 0, voltage = 0 |
-| GL renderer | **Hard** | "Android Emulator", "SwiftShader", "Bluestacks" |
+| GL renderer | High | "Android Emulator", "SwiftShader", "Bluestacks" |
 | File artifacts | Soft (0.6) | `/dev/qemu_pipe`, `/system/bin/qemu-props` |
 | Telephony operator | Soft (0.55) | Network/SIM operator name = "Android" |
 
 ### App Cloning Detection (7 checks)
 
-| Check | Signal Tier | Description |
+| Check | Confidence | Description |
 |-------|-------------|-------------|
-| Data directory path | **Hard** | Foreign package name or virtual path segments in `filesDir` |
-| APK source path | **Hard** | APK loaded from `/data/data/` instead of `/data/app/` |
-| `/proc/self/maps` | **Hard** | Foreign package executable artifacts in memory maps |
+| Data directory path | High | Foreign package name or virtual path segments in `filesDir` |
+| APK source path | High | APK loaded from `/data/data/` instead of `/data/app/` |
+| `/proc/self/maps` | High | Foreign package executable artifacts in memory maps |
 | Environment variables | Soft (0.7) | VirtualApp IOUniformer env vars (`V_REPLACE_ITEM`, etc.) |
 | Stack trace | Soft (0.6) | Cloner class prefixes in call stack |
 | Known cloner packages | Soft (0.4) | Installed cloner apps (Parallel Space, Dual Space, etc.) |
-| ArtMethod hotness_count | **Hard** | `hotness_count == 0` for hot framework methods (ACSAC 2024) |
+| ArtMethod hotness_count | High | `hotness_count == 0` for hot framework methods (ACSAC 2024) |
 
 ### App Integrity (4 checks)
 
-| Check | Signal Tier | Description |
+| Check | Confidence | Description |
 |-------|-------------|-------------|
-| Signing certificate | **Hard** | SHA-256 mismatch = app was re-signed |
+| Signing certificate | High | SHA-256 mismatch = app was re-signed |
 | Debug flag | Soft (0.6) | `FLAG_DEBUGGABLE` set on release build |
 | Installer source | Soft (0.4) | Not installed from a known app store |
 | DEX CRC | Soft (0.8) | `classes.dex` CRC32 mismatch |
 
 ### Hooking Detection (5 checks)
 
-| Check | Signal Tier | Description |
+| Check | Confidence | Description |
 |-------|-------------|-------------|
-| Hooking libraries | **Hard** | Frida/Xposed/Substrate in `/proc/self/maps` |
-| rwxp segments | **Hard** | Non-JIT `rwxp` memory pages (Frida GumJS/V8) |
+| Hooking libraries | High | Frida/Xposed/Substrate in `/proc/self/maps` |
+| rwxp segments | High | Non-JIT `rwxp` memory pages (Frida GumJS/V8) |
 | Frida ports | Soft (0.7) | Ports 27042/27043 open on localhost |
 | Xposed classes | Soft (0.8) | `XposedBridge`, `XposedHelpers` loadable via reflection |
 | Debugger | Soft (0.6) | JDWP connected or `TracerPid != 0` |
 
 ## OWASP MASVS Mapping
 
-| Detector | MASVS Control | MASWE Weaknesses |
-|----------|--------------|------------------|
-| Emulator Detection | MASVS-RESILIENCE-4 | MASWE-0100 (Emulator Detection) |
-| App Cloning Detection | MASVS-RESILIENCE-4 | MASWE-0100 |
-| App Integrity | MASVS-RESILIENCE-2 | MASWE-0067 (Debug Detection), MASWE-0104 (Signature Verification) |
-| Hooking Detection | MASVS-RESILIENCE-3 | MASWE-0101 (Reverse Engineering Detection) |
-| Root Detection | MASVS-RESILIENCE-1 | MASWE-0098 (Root Detection) |
+| Detector | MASVS Control | Related MASWE |
+|----------|--------------|---------------|
+| Emulator Detection | MASVS-RESILIENCE-1 | MASWE-0099 |
+| App Cloning Detection | MASVS-RESILIENCE-1 | MASWE-0098 |
+| App Integrity | MASVS-RESILIENCE-2 | MASWE-0067 |
+| Hooking Detection | MASVS-RESILIENCE-4 | MASWE-0102 |
+| Root Detection | MASVS-RESILIENCE-1 | MASWE-0097 |
 
 ## Build from Source
 
