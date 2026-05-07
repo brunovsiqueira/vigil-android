@@ -58,6 +58,12 @@ tools/          Frida bypass scripts for attacker-perspective testing
 - `Vigil` object owns threading. Callback API delivers on main thread. Consumers never need to think about threads.
 - Sensor noise analysis off by default (`deepScan = false`). Default check completes in ~100ms.
 
+## Detection design decisions
+
+- **Positive-only for inconclusive checks**: if a check can't run (e.g., ArtMethod on unsupported API, jmethodID is indirect on Samsung), return `Inconclusive` — never "clean". Absence of signal is not evidence of safety.
+- **Executable-extension filter on /proc/self/maps**: flag foreign paths only if they end in `.apk/.dex/.so/.odex/.vdex/.oat/.art`. Non-executable files (fonts, configs mapped by GMS) are benign. Do not whitelist by package name — breaks on Chinese OEM devices.
+- **Attacker-perspective testing**: `tools/` contains Frida bypass scripts that simulate real attacks. Use them to validate that detection survives hooking.
+
 ## Don't
 
 - Don't use `File.exists()` — use `NativeBridge.fileExists()`.
