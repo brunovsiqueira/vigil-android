@@ -42,6 +42,12 @@ docs/adr/       Architecture Decision Records (ADR-001 through ADR-008)
 tools/          Frida bypass scripts for attacker-perspective testing
 ```
 
+## Public API surface
+
+- `Vigil` object (callback + suspend). This is the only entry point consumers use.
+- `VigilConfig`, `VigilResult`, `DetectionResult`, `Evidence`, `TamperStatus`, `DetectionCategory`, `DetectionError`.
+- Everything else (`VigilEngine`, `TamperVerdict`, detectors, `NativeBridge`) is `internal`. Don't expose them.
+
 ## Key constraints
 
 - Never crash the host app. Detectors fail-open; errors are reported, not thrown.
@@ -51,3 +57,11 @@ tools/          Frida bypass scripts for attacker-perspective testing
 - Read `/proc/self/maps` once per detector, reuse content. Do not call `scanMapsForPattern()` per pattern.
 - `Vigil` object owns threading. Callback API delivers on main thread. Consumers never need to think about threads.
 - Sensor noise analysis off by default (`deepScan = false`). Default check completes in ~100ms.
+
+## Don't
+
+- Don't use `File.exists()` — use `NativeBridge.fileExists()`.
+- Don't read `/proc` via Java I/O — use `NativeBridge.readMapsContent()` or `readProcFile()`.
+- Don't throw exceptions from detectors — wrap in `SafeExec`, return `DetectionError`.
+- Don't add public classes — the API surface is intentionally small.
+- Don't duplicate `getSystemProperty()` — use `SystemProps.get()`.
