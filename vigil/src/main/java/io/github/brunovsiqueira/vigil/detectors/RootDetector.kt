@@ -44,6 +44,14 @@ class RootDetector : TamperDetector {
         checkTestKeys(evidence, errors)
         checkMagiskArtifacts(evidence, errors)
 
+        // Advanced checks via native C (direct syscalls)
+        if (NativeBridge.isLoaded) {
+            checkOverlayFs(evidence, errors)
+            checkMagiskUnixSockets(evidence, errors)
+            checkMountNamespace(evidence, errors)
+            checkApatchSupercall(evidence, errors)
+        }
+
         return buildResult(evidence, errors)
     }
 
@@ -400,6 +408,138 @@ class RootDetector : TamperDetector {
     }
 
     // ──────────────────────────────────────────────
+    // Check 8: OverlayFS Detection (Native)
+    // Hard signal
+    //
+    // KernelSU uses overlayfs to mount modules into
+    // the app's filesystem view. The mount entries
+    // contain identifiers like "KSU" or reference
+    // /data/adb paths.
+    // ──────────────────────────────────────────────
+
+    private fun checkOverlayFs(
+        evidence: MutableList<Evidence>,
+        errors: MutableList<DetectionError>,
+    ) {
+        SafeExec.runCatching(CHECK_OVERLAYFS, name, errors) {
+            val result = NativeBridge.detectOverlayFs()
+            val suspicious = result != null
+
+            evidence.add(
+                Evidence(
+                    checkName = CHECK_OVERLAYFS,
+                    description = if (suspicious) {
+                        "Suspicious overlayfs mounts detected in /proc/self/mountinfo"
+                    } else {
+                        "No suspicious overlayfs mounts found"
+                    },
+                    rawValue = result ?: "(clean)",
+                    suspicious = suspicious,
+                )
+            )
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // Check 9: Magisk Unix Domain Sockets (Native)
+    // Soft signal — weight: 0.75
+    //
+    // Magisk daemon creates abstract Unix sockets
+    // with 32-char random hex names for IPC.
+    // Source: RootBeerFresh detection technique.
+    // ──────────────────────────────────────────────
+
+    private fun checkMagiskUnixSockets(
+        evidence: MutableList<Evidence>,
+        errors: MutableList<DetectionError>,
+    ) {
+        SafeExec.runCatching(CHECK_MAGISK_UDS, name, errors) {
+            val result = NativeBridge.detectMagiskUnixSockets()
+            val suspicious = result != null
+
+            evidence.add(
+                Evidence(
+                    checkName = CHECK_MAGISK_UDS,
+                    description = if (suspicious) {
+                        "Suspicious Unix sockets found (32+ char hex names typical of Magisk daemon)"
+                    } else {
+                        "No suspicious Unix domain sockets detected"
+                    },
+                    rawValue = result ?: "(clean)",
+                    suspicious = suspicious,
+                )
+            )
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // Check 10: Mount Namespace Comparison (Native)
+    // Soft signal — weight: 0.7
+    //
+    // Root hiding tools (Shamiko, KernelSU) use
+    // mount namespace isolation to unmount modules
+    // from the app's view. This changes the mount
+    // namespace ID vs init (PID 1).
+    // ──────────────────────────────────────────────
+
+    private fun checkMountNamespace(
+        evidence: MutableList<Evidence>,
+        errors: MutableList<DetectionError>,
+    ) {
+        SafeExec.runCatching(CHECK_MOUNT_NS, name, errors) {
+            val differs = NativeBridge.checkMountNamespaceDiff()
+
+            evidence.add(
+                Evidence(
+                    checkName = CHECK_MOUNT_NS,
+                    description = if (differs) {
+                        "Mount namespace differs from init — root hiding (Shamiko/KernelSU) may be active"
+                    } else {
+                        "Mount namespace matches init (normal)"
+                    },
+                    rawValue = if (differs) "differs" else "matches",
+                    suspicious = differs,
+                )
+            )
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    // Check 11: APatch SuperCall Probe (Native)
+    // Hard signal
+    //
+    // APatch registers custom syscall #45 for root.
+    // Probing with an invalid key returns -EPERM if
+    // APatch is present, vs normal brk behavior
+    // otherwise. Safe read-only probe.
+    //
+    // Source: https://github.com/bmax121/APatch
+    // ──────────────────────────────────────────────
+
+    private fun checkApatchSupercall(
+        evidence: MutableList<Evidence>,
+        errors: MutableList<DetectionError>,
+    ) {
+        SafeExec.runCatching(CHECK_APATCH_SUPERCALL, name, errors) {
+            val result = NativeBridge.probeSupercall()
+            val suspicious = result == 1
+
+            evidence.add(
+                Evidence(
+                    checkName = CHECK_APATCH_SUPERCALL,
+                    description = when (result) {
+                        1 -> "APatch SuperCall detected (syscall #45 returned EPERM)"
+                        0 -> "APatch SuperCall not detected"
+                        else -> "APatch probe inconclusive"
+                    },
+                    rawValue = "result=$result",
+                    suspicious = suspicious,
+                )
+            )
+        }
+    }
+
+    // ──────────────────────────────────────────────
     // Result Building
     // ──────────────────────────────────────────────
 
@@ -493,16 +633,26 @@ class RootDetector : TamperDetector {
         // Magisk / KernelSU / APatch artifacts (Check 7)
         private const val CHECK_MAGISK_ARTIFACTS = "root_magisk_artifacts"
 
+        // OverlayFS detection (Check 8) — native
+        private const val CHECK_OVERLAYFS = "root_overlayfs"
+
+        // Magisk Unix domain sockets (Check 9) — native
+        private const val CHECK_MAGISK_UDS = "root_magisk_uds"
+
+        // Mount namespace comparison (Check 10) — native
+        private const val CHECK_MOUNT_NS = "root_mount_namespace"
+
+        // APatch SuperCall probe (Check 11) — native
+        private const val CHECK_APATCH_SUPERCALL = "root_apatch_supercall"
+
         // ── Tier 1: Hard signals ──
-        // Zero documented false positives on production devices.
-        // Any one = definitive root.
         private val HARD_SIGNAL_CHECKS = setOf(
-            CHECK_SYSTEM_RW,        // /system mounted read-write
+            CHECK_SYSTEM_RW,            // /system mounted read-write
+            CHECK_OVERLAYFS,            // KernelSU overlayfs in mountinfo
+            CHECK_APATCH_SUPERCALL,     // APatch custom syscall #45 responds
         )
 
         // ── Tier 2: Soft signals ──
-        // Contribute to weighted scoring when hard signals are absent
-        // (e.g., hidden by MagiskHide or Shamiko).
         private val SOFT_CHECK_WEIGHTS = mapOf(
             CHECK_SU_BINARY to 0.7f,
             CHECK_ROOT_APPS to 0.6f,
@@ -512,6 +662,8 @@ class RootDetector : TamperDetector {
             CHECK_PROP_ADB_ROOT to 0.6f,
             CHECK_TEST_KEYS to 0.4f,
             CHECK_MAGISK_ARTIFACTS to 0.8f,
+            CHECK_MAGISK_UDS to 0.75f,
+            CHECK_MOUNT_NS to 0.7f,
         )
 
         // ── SU binary paths ──
