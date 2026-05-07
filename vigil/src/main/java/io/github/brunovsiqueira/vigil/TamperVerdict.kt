@@ -11,7 +11,7 @@ import io.github.brunovsiqueira.vigil.error.DetectionError
  * @property errors Aggregated errors from all detectors.
  * @property durationMs Total wall-clock time for all detections in milliseconds.
  */
-data class TamperVerdict(
+internal data class TamperVerdict(
     val status: TamperStatus,
     val overallScore: Float,
     val results: Map<DetectionCategory, DetectionResult>,

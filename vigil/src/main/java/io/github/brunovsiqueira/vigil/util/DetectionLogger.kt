@@ -50,7 +50,7 @@ object DetectionLogger {
         Log.i(TAG, "Detection engine started with $detectorCount detectors")
     }
 
-    fun verdictProduced(verdict: TamperVerdict) {
+    internal fun verdictProduced(verdict: TamperVerdict) {
         if (!enabled) return
         Log.i(
             TAG,

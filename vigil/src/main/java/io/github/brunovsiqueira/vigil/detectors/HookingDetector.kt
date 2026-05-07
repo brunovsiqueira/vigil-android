@@ -10,9 +10,7 @@ import io.github.brunovsiqueira.vigil.error.DetectionError
 import io.github.brunovsiqueira.vigil.util.SafeExec
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
 import java.io.File
-import java.io.FileReader
 import java.net.InetSocketAddress
 import java.net.Socket
 
@@ -41,8 +39,11 @@ class HookingDetector : TamperDetector {
         val errors = mutableListOf<DetectionError>()
         val evidence = mutableListOf<Evidence>()
 
-        checkProcMapsForHookingLibs(evidence, errors)
-        checkRwxpSegments(evidence, errors)
+        // Read /proc/self/maps once and reuse for both checks
+        val mapsContent = NativeBridge.readMapsContent()
+
+        checkProcMapsForHookingLibs(mapsContent, evidence, errors)
+        checkRwxpSegments(mapsContent, evidence, errors)
         checkFridaPorts(evidence, errors)
         checkXposedClasses(evidence, errors)
         checkDebuggerAttached(evidence, errors)
@@ -65,44 +66,22 @@ class HookingDetector : TamperDetector {
     // ──────────────────────────────────────────────
 
     private fun checkProcMapsForHookingLibs(
+        mapsContent: String?,
         evidence: MutableList<Evidence>,
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.runCatching(CHECK_HOOK_LIBS, name, errors) {
             val foundLibs = mutableListOf<String>()
 
-            // Use NativeBridge (direct syscalls) to bypass Frida libc hooks.
-            // This is critical for hooking detection — Frida hooks libc read()
-            // to filter "frida" strings from /proc/self/maps output.
-            if (NativeBridge.isLoaded) {
-                for (pattern in HOOKING_LIB_PATTERNS) {
-                    if (NativeBridge.scanMapsForPattern(pattern)) {
-                        foundLibs.add(pattern)
-                    }
-                }
-            } else {
-                try {
-                    BufferedReader(FileReader("/proc/self/maps")).use { reader ->
-                        var line = reader.readLine()
-                        while (line != null) {
-                            val lower = line.lowercase()
-                            for (pattern in HOOKING_LIB_PATTERNS) {
-                                if (lower.contains(pattern)) {
-                                    foundLibs.add(line.substringAfterLast(" ").trim())
-                                    break
-                                }
-                            }
-                            line = reader.readLine()
+            if (mapsContent != null) {
+                mapsContent.lineSequence().forEach { line ->
+                    val lower = line.lowercase()
+                    for (pattern in HOOKING_LIB_PATTERNS) {
+                        if (lower.contains(pattern)) {
+                            foundLibs.add(line.substringAfterLast(" ").trim())
+                            break
                         }
                     }
-                } catch (e: Exception) {
-                    errors.add(
-                        DetectionError.FileAccessFailed(
-                            detectorName = name,
-                            path = "/proc/self/maps",
-                            cause = e,
-                        )
-                    )
                 }
             }
 
@@ -138,29 +117,12 @@ class HookingDetector : TamperDetector {
     // ──────────────────────────────────────────────
 
     private fun checkRwxpSegments(
+        mapsContent: String?,
         evidence: MutableList<Evidence>,
         errors: MutableList<DetectionError>,
     ) {
         SafeExec.runCatching(CHECK_RWXP, name, errors) {
             val suspiciousSegments = mutableListOf<String>()
-
-            // Use NativeBridge for direct syscall reading when available
-            val mapsContent = if (NativeBridge.isLoaded) {
-                NativeBridge.readProcMaps()
-            } else {
-                try {
-                    BufferedReader(FileReader("/proc/self/maps")).use { it.readText() }
-                } catch (e: Exception) {
-                    errors.add(
-                        DetectionError.FileAccessFailed(
-                            detectorName = name,
-                            path = "/proc/self/maps",
-                            cause = e,
-                        )
-                    )
-                    null
-                }
-            }
 
             mapsContent?.lineSequence()?.forEach { line ->
                 if (line.contains("rwxp")) {

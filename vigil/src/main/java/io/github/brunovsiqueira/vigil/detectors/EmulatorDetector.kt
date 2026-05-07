@@ -21,6 +21,7 @@ import io.github.brunovsiqueira.vigil.Evidence
 import io.github.brunovsiqueira.vigil.TamperDetector
 import io.github.brunovsiqueira.vigil.error.DetectionError
 import io.github.brunovsiqueira.vigil.util.SafeExec
+import io.github.brunovsiqueira.vigil.util.SystemProps
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -861,16 +862,7 @@ class EmulatorDetector(
     // Utilities
     // ──────────────────────────────────────────────
 
-    @Suppress("PrivateApi")
-    private fun getSystemProperty(name: String): String {
-        return try {
-            val clazz = Class.forName("android.os.SystemProperties")
-            val method = clazz.getMethod("get", String::class.java)
-            (method.invoke(null, name) as? String) ?: ""
-        } catch (_: Exception) {
-            ""
-        }
-    }
+    private fun getSystemProperty(name: String): String = SystemProps.get(name)
 
     private data class BuildCheck(
         val id: String,

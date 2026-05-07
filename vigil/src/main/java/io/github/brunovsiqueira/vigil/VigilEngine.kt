@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
  * Thread safety: This class is stateless and safe to call from any thread.
  * The [evaluate] function is a suspend function designed to be called from a ViewModel scope.
  */
-class VigilEngine private constructor(
+internal class VigilEngine private constructor(
     private val detectors: List<TamperDetector>,
 ) {
 

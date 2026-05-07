@@ -9,8 +9,8 @@ import io.github.brunovsiqueira.vigil.Evidence
 import io.github.brunovsiqueira.vigil.TamperDetector
 import io.github.brunovsiqueira.vigil.error.DetectionError
 import io.github.brunovsiqueira.vigil.util.SafeExec
+import io.github.brunovsiqueira.vigil.util.SystemProps
 import java.io.BufferedReader
-import java.io.File
 import java.io.FileReader
 
 /**
@@ -72,12 +72,8 @@ class RootDetector : TamperDetector {
             val foundPaths = mutableListOf<String>()
 
             for (path in SU_BINARY_PATHS) {
-                try {
-                    if (File(path).exists()) {
-                        foundPaths.add(path)
-                    }
-                } catch (_: Exception) {
-                    // Some paths may throw SecurityException — skip silently
+                if (NativeBridge.fileExists(path)) {
+                    foundPaths.add(path)
                 }
             }
 
@@ -158,11 +154,10 @@ class RootDetector : TamperDetector {
             var enforceValue: String? = null
             var selinuxProp: String? = null
 
-            // Read /sys/fs/selinux/enforce — "1" = enforcing, "0" = permissive
+            // Read /sys/fs/selinux/enforce via NativeBridge (direct syscall)
             try {
-                val file = File("/sys/fs/selinux/enforce")
-                if (file.exists()) {
-                    enforceValue = file.readText().trim()
+                if (NativeBridge.fileExists("/sys/fs/selinux/enforce")) {
+                    enforceValue = NativeBridge.readProcFile("/sys/fs/selinux/enforce")?.trim()
                 }
             } catch (_: Exception) {
                 // File may not be readable on some devices
@@ -382,12 +377,8 @@ class RootDetector : TamperDetector {
             val foundPaths = mutableListOf<String>()
 
             for (path in MAGISK_ARTIFACT_PATHS) {
-                try {
-                    if (File(path).exists()) {
-                        foundPaths.add(path)
-                    }
-                } catch (_: Exception) {
-                    // Some paths may throw SecurityException — skip silently
+                if (NativeBridge.fileExists(path)) {
+                    foundPaths.add(path)
                 }
             }
 
@@ -592,16 +583,7 @@ class RootDetector : TamperDetector {
     // Utilities
     // ──────────────────────────────────────────────
 
-    @Suppress("PrivateApi")
-    private fun getSystemProperty(name: String): String {
-        return try {
-            val clazz = Class.forName("android.os.SystemProperties")
-            val method = clazz.getMethod("get", String::class.java)
-            (method.invoke(null, name) as? String) ?: ""
-        } catch (_: Exception) {
-            ""
-        }
-    }
+    private fun getSystemProperty(name: String): String = SystemProps.get(name)
 
     companion object {
         private const val DETECTION_THRESHOLD = 0.35f

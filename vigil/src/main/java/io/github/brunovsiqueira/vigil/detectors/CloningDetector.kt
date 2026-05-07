@@ -9,9 +9,7 @@ import io.github.brunovsiqueira.vigil.Evidence
 import io.github.brunovsiqueira.vigil.TamperDetector
 import io.github.brunovsiqueira.vigil.error.DetectionError
 import io.github.brunovsiqueira.vigil.util.SafeExec
-import java.io.BufferedReader
 import java.io.File
-import java.io.FileReader
 
 /**
  * Detects whether the app is running inside a virtual container / cloning app
@@ -150,24 +148,7 @@ class CloningDetector : TamperDetector {
             val packageName = context.packageName
             val foreignPaths = mutableListOf<String>()
 
-            // Use NativeBridge (direct syscalls) when available to bypass Frida libc hooks.
-            // Falls back to Java BufferedReader if native library is not loaded.
-            val mapsContent = if (NativeBridge.isLoaded) {
-                NativeBridge.readProcMaps()
-            } else {
-                try {
-                    BufferedReader(FileReader("/proc/self/maps")).use { it.readText() }
-                } catch (e: Exception) {
-                    errors.add(
-                        DetectionError.FileAccessFailed(
-                            detectorName = name,
-                            path = "/proc/self/maps",
-                            cause = e,
-                        )
-                    )
-                    null
-                }
-            }
+            val mapsContent = NativeBridge.readMapsContent()
 
             mapsContent?.lineSequence()?.forEach { line ->
                 val path = line.substringAfterLast(" ").trim()

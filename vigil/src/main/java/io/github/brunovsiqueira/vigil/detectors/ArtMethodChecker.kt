@@ -1,7 +1,6 @@
 package io.github.brunovsiqueira.vigil.detectors
 
 import android.os.Build
-import android.util.Log
 import java.lang.reflect.Method
 
 /**
@@ -30,16 +29,8 @@ internal class ArtMethodChecker {
         private const val RESULT_NORMAL = 0
         private const val RESULT_ERROR = -1
 
-        private var libraryLoaded = false
-
-        init {
-            try {
-                System.loadLibrary("vigil_native")
-                libraryLoaded = true
-            } catch (e: UnsatisfiedLinkError) {
-                Log.w(TAG, "Native library not available: ${e.message}")
-            }
-        }
+        private val libraryLoaded: Boolean
+            get() = NativeBridge.isLoaded
     }
 
     /**
