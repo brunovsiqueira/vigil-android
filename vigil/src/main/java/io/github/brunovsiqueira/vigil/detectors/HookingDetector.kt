@@ -126,9 +126,13 @@ class HookingDetector : TamperDetector {
 
             mapsContent?.lineSequence()?.forEach { line ->
                 if (line.contains("rwxp")) {
-                    if (!line.contains("dalvik-jit-code-cache") &&
-                        !line.contains("dalvik-zygote-jit-code-cache")
-                    ) {
+                    // Whitelist ART's JIT code cache — legitimate rwxp mappings.
+                    // Naming varies by Android version:
+                    //   Legacy (Android 7-9):  "dalvik-jit-code-cache" (via ashmem)
+                    //   Modern (Android 10+):  "jit-code-cache", "jit-cache" (via memfd_create)
+                    // Source: AOSP art/runtime/jit/jit_memory_region.cc
+                    val isJitCache = JIT_CACHE_PATTERNS.any { line.contains(it) }
+                    if (!isJitCache) {
                         suspiciousSegments.add(line.trim())
                     }
                 }
@@ -389,6 +393,19 @@ class HookingDetector : TamperDetector {
             "de.robv.android.xposed.XposedBridge",
             "de.robv.android.xposed.XposedHelpers",
             "de.robv.android.xposed.XC_MethodHook",
+        )
+
+        // ART JIT code cache patterns — legitimate rwxp mappings to whitelist.
+        // Naming varies by Android version:
+        //   Android 7-9: "dalvik-jit-code-cache" (ashmem-backed, /dev/ashmem/dalvik-*)
+        //   Android 10+: "jit-code-cache", "jit-cache" (memfd_create, /memfd:jit-cache)
+        // Source: AOSP art/runtime/jit/jit_memory_region.cc
+        private val JIT_CACHE_PATTERNS = listOf(
+            "jit-code-cache",           // Non-zygote JIT (modern + legacy)
+            "jit-cache",                // memfd name (modern)
+            "zygote-jit-code-cache",    // Zygote JIT (modern + legacy)
+            "jit-zygote-cache",         // Zygote memfd name (modern)
+            "data-code-cache",          // JIT data region (modern)
         )
     }
 }

@@ -48,7 +48,11 @@ class RootDetector : TamperDetector {
         if (NativeBridge.isLoaded) {
             checkOverlayFs(evidence, errors)
             checkMagiskUnixSockets(evidence, errors)
-            checkMountNamespace(evidence, errors)
+            // Note: mount namespace comparison (checkMountNamespace) was REMOVED.
+            // On stock Android, Zygote calls unshare(CLONE_NEWNS) for every app
+            // (see AOSP Zygote.cpp ensureInAppMountNamespace). This means ALL apps
+            // have a different mount namespace than init — the check was always true.
+            // Source: platform/frameworks/base/core/jni/com_android_internal_os_Zygote.cpp
             checkApatchSupercall(evidence, errors)
         }
 
@@ -138,12 +142,22 @@ class RootDetector : TamperDetector {
     }
 
     // ──────────────────────────────────────────────
+    // ──────────────────────────────────────────────
     // Check 3: SELinux Status
     // Weight: 0.5
     //
-    // Production Android devices run SELinux in
-    // "Enforcing" mode. Rooting tools often set it
-    // to "Permissive" to bypass access controls.
+    // Production builds are compile-time locked to
+    // enforcing via ALLOW_PERMISSIVE_SELINUX=false.
+    // Source: AOSP platform/system/core/init/selinux.cpp
+    //   IsEnforcing() returns true unconditionally
+    //   on "user" (production) builds.
+    //
+    // Reads /sys/fs/selinux/enforce directly (selinuxfs).
+    // "1" = enforcing, "0" = permissive.
+    //
+    // Note: ro.build.selinux is DEPRECATED — absent on
+    // most devices (verified on Pixel, Samsung, Xiaomi).
+    // We do not check it.
     // ──────────────────────────────────────────────
 
     private fun checkSeLinuxStatus(
@@ -152,35 +166,28 @@ class RootDetector : TamperDetector {
     ) {
         SafeExec.runCatching(CHECK_SELINUX, name, errors) {
             var enforceValue: String? = null
-            var selinuxProp: String? = null
 
-            // Read /sys/fs/selinux/enforce via NativeBridge (direct syscall)
             try {
                 if (NativeBridge.fileExists("/sys/fs/selinux/enforce")) {
                     enforceValue = NativeBridge.readProcFile("/sys/fs/selinux/enforce")?.trim()
                 }
             } catch (_: Exception) {
-                // File may not be readable on some devices
+                // SELinux filesystem may not be readable from app context on some devices
             }
 
-            // Check system property as fallback
-            selinuxProp = getSystemProperty("ro.build.selinux")
-
-            // SELinux is suspicious if explicitly set to permissive (enforce = "0")
-            // or if the property says it's disabled
-            val suspicious = enforceValue == "0" ||
-                selinuxProp.equals("0", ignoreCase = true) ||
-                selinuxProp.equals("disabled", ignoreCase = true)
+            // "0" = permissive. On production (user) builds, AOSP compile-time locks
+            // this to enforcing. Permissive mode requires a modified kernel or root.
+            val suspicious = enforceValue == "0"
 
             evidence.add(
                 Evidence(
                     checkName = CHECK_SELINUX,
-                    description = if (suspicious) {
-                        "SELinux is not enforcing — common on rooted devices"
-                    } else {
-                        "SELinux appears to be in enforcing mode"
+                    description = when {
+                        suspicious -> "SELinux is permissive — production devices are enforcing"
+                        enforceValue == "1" -> "SELinux is enforcing (normal)"
+                        else -> "Could not read SELinux status"
                     },
-                    rawValue = "enforce=$enforceValue ro.build.selinux=$selinuxProp",
+                    rawValue = "enforce=${enforceValue ?: "(unreadable)"}",
                     suspicious = suspicious,
                 )
             )
@@ -645,7 +652,8 @@ class RootDetector : TamperDetector {
             CHECK_TEST_KEYS to 0.4f,
             CHECK_MAGISK_ARTIFACTS to 0.8f,
             CHECK_MAGISK_UDS to 0.75f,
-            CHECK_MOUNT_NS to 0.7f,
+            // CHECK_MOUNT_NS removed: Zygote unshare(CLONE_NEWNS) per app means
+            // all apps differ from init — would be 100% false positive rate.
         )
 
         // ── SU binary paths ──

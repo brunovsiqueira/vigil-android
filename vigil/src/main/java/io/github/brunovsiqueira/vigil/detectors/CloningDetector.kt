@@ -106,11 +106,19 @@ class CloningDetector : TamperDetector {
         SafeExec.runCatching(CHECK_APK_SOURCE, name, errors) {
             val sourceDir = context.applicationInfo.sourceDir ?: ""
 
-            // Normal: /data/app/~~hash~~/com.example.app-hash/base.apk
+            // Legitimate APK locations per AOSP Environment.java and installd:
+            //   /data/app/         — user-installed apps (all Android versions)
+            //   /system/app/       — pre-installed system apps
+            //   /system/priv-app/  — privileged system apps
+            //   /system_ext/       — system extension partition (Android 11+)
+            //   /vendor/app/       — vendor partition apps
+            //   /product/app/      — product partition apps
+            //   /oem/app/          — OEM partition apps
+            //   /odm/app/          — ODM partition apps
+            //   /apex/             — APEX module apps (Android 10+)
+            //   /mnt/expand/       — adoptable storage (Android 6+)
             // Virtual container: /data/data/<container_pkg>/virtual/.../base.apk
-            // Source: ConbeerLib /proc/self/maps analysis, SACMAT 2020
-            val isNormalPath = sourceDir.startsWith("/data/app/") ||
-                sourceDir.startsWith("/system/")
+            val isNormalPath = LEGITIMATE_APK_PREFIXES.any { sourceDir.startsWith(it) }
             val suspicious = sourceDir.isNotEmpty() && !isNormalPath
 
             evidence.add(
@@ -152,8 +160,11 @@ class CloningDetector : TamperDetector {
 
             mapsContent?.lineSequence()?.forEach { line ->
                 val path = line.substringAfterLast(" ").trim()
+                // Check paths under app data directories. /data/data is a symlink
+                // to /data/user/0 on Android 7+ (see AOSP init.rc: "symlink /data/data /data/user/0").
+                // Also check /data/user_de/ for device-encrypted storage (Direct Boot, Android 7+).
                 if (path.startsWith("/data/data/") || path.startsWith("/data/app/") ||
-                    path.startsWith("/data/user/")
+                    path.startsWith("/data/user/") || path.startsWith("/data/user_de/")
                 ) {
                     if (!path.contains(packageName) && !isWhitelistedPath(path)) {
                         foreignPaths.add(path)
@@ -474,6 +485,21 @@ class CloningDetector : TamperDetector {
             CHECK_ENV_VARS to 0.7f,
             CHECK_STACK_TRACE to 0.6f,
             CHECK_CLONER_PACKAGES to 0.4f,
+        )
+
+        // Legitimate APK installation paths per AOSP.
+        // Source: Environment.java, installd/utils.cpp, PackageManagerServiceUtils.java
+        private val LEGITIMATE_APK_PREFIXES = listOf(
+            "/data/app/",       // User-installed apps
+            "/system/app/",     // Pre-installed system apps
+            "/system/priv-app/",// Privileged system apps
+            "/system_ext/",     // System extension partition (Android 11+)
+            "/vendor/app/",     // Vendor partition apps
+            "/product/app/",    // Product partition apps
+            "/oem/app/",        // OEM partition apps
+            "/odm/app/",        // ODM partition apps
+            "/apex/",           // APEX module apps (Android 10+)
+            "/mnt/expand/",     // Adoptable storage (Android 6+)
         )
 
         // File extensions that indicate executable/code artifacts in /proc/self/maps.

@@ -154,11 +154,17 @@ class EmulatorDetector(
             val suspiciousValue: String?, // null = any non-empty value is suspicious
         )
 
+        // System properties verified against AOSP source:
+        // - ro.kernel.qemu: set in device/generic/goldfish/product/generic.mk
+        // - ro.boot.qemu: from kernel cmdline "androidboot.qemu=1" — this is
+        //   what Build.IS_EMULATOR checks (Build.java: getString("ro.boot.qemu"))
+        // - ro.hardware: from kernel cmdline "androidboot.hardware=ranchu"
+        // Removed: init.svc.qemud (deprecated — qemud uses goldfish pipe, not a socket)
+        // Removed: ro.kernel.android.qemud (not set in modern emulator builds)
         val props = listOf(
             SysPropCheck(CHECK_SYSPROP_QEMU, "ro.kernel.qemu", "1"),
+            SysPropCheck(CHECK_SYSPROP_BOOT_QEMU, "ro.boot.qemu", "1"),
             SysPropCheck(CHECK_SYSPROP_HARDWARE, "ro.hardware", "ranchu"),
-            SysPropCheck(CHECK_SYSPROP_QEMUD, "init.svc.qemud", "running"),
-            SysPropCheck(CHECK_SYSPROP_QEMUD_DEV, "ro.kernel.android.qemud", null),
         )
 
         for (prop in props) {
@@ -703,12 +709,18 @@ class EmulatorDetector(
         evidence: MutableList<Evidence>,
         errors: MutableList<DetectionError>,
     ) {
+        // Emulator-specific files verified against AOSP goldfish device tree.
+        // Source: device/generic/goldfish/+/refs/heads/main/
         val paths = listOf(
-            "/system/bin/qemu-props" to "QEMU properties binary",
-            "/dev/qemu_pipe" to "QEMU communication pipe",
-            "/dev/goldfish_pipe" to "Goldfish communication pipe",
-            "/dev/socket/qemud" to "QEMU daemon socket",
-            "/system/lib/libc_malloc_debug_qemu.so" to "QEMU malloc debug library",
+            // goldfish_pipe kernel driver: drivers/platform/goldfish/goldfish_pipe.c
+            // Permissions defined in ueventd.ranchu.rc
+            "/dev/goldfish_pipe" to "Goldfish pipe device (ueventd.ranchu.rc)",
+            // Legacy pipe name from same driver (older emulators)
+            "/dev/qemu_pipe" to "QEMU pipe device (legacy goldfish_pipe.c naming)",
+            // qemu-props service, reads host properties via pipe.
+            // Moved from /system/bin/ to /vendor/bin/ in modern builds (init.ranchu.rc)
+            "/vendor/bin/qemu-props" to "QEMU properties service (init.ranchu.rc)",
+            "/system/bin/qemu-props" to "QEMU properties service (legacy path)",
         )
 
         for ((path, description) in paths) {
@@ -912,9 +924,8 @@ class EmulatorDetector(
 
         // System properties (Check 2)
         private const val CHECK_SYSPROP_QEMU = "sysprop_ro_kernel_qemu"
+        private const val CHECK_SYSPROP_BOOT_QEMU = "sysprop_ro_boot_qemu"
         private const val CHECK_SYSPROP_HARDWARE = "sysprop_ro_hardware"
-        private const val CHECK_SYSPROP_QEMUD = "sysprop_init_svc_qemud"
-        private const val CHECK_SYSPROP_QEMUD_DEV = "sysprop_ro_kernel_android_qemud"
 
         // Sensor strings (Check 3)
         private const val CHECK_SENSOR_STRING_ACCEL = "sensor_string_accelerometer"
@@ -954,13 +965,14 @@ class EmulatorDetector(
         private const val GROUP_TELEPHONY = "telephony_"
 
         // ── Tier 1: Hard signals ──
-        // Zero documented false positives. Any one = definitive emulator.
+        // High confidence. Source verified against AOSP goldfish device tree.
         private val HARD_SIGNAL_CHECKS = setOf(
-            CHECK_BUILD_HARDWARE,       // "ranchu" / "goldfish" — QEMU virtual board
-            CHECK_SENSOR_STRING_ACCEL,  // "Goldfish" — emulator-exclusive sensor HAL
-            CHECK_SENSOR_STRING_GYRO,   // "Goldfish" — emulator-exclusive sensor HAL
-            CHECK_GL_RENDERER,          // "Android Emulator OpenGL ES Translator"
-            CHECK_SYSPROP_QEMU,         // ro.kernel.qemu=1 — canonical QEMU kernel flag
+            CHECK_BUILD_HARDWARE,       // "ranchu"/"goldfish" — BoardConfigCommon.mk
+            CHECK_SENSOR_STRING_ACCEL,  // "Goldfish" — sensor_list.cpp in goldfish HAL
+            CHECK_SENSOR_STRING_GYRO,   // "Goldfish" — sensor_list.cpp in goldfish HAL
+            CHECK_GL_RENDERER,          // "Android Emulator" — opengles.c in QEMU
+            CHECK_SYSPROP_QEMU,         // ro.kernel.qemu=1 — generic.mk in goldfish
+            CHECK_SYSPROP_BOOT_QEMU,    // ro.boot.qemu=1 — kernel cmdline (Build.IS_EMULATOR source)
         )
 
         // ── Tier 2: Soft signals ──
