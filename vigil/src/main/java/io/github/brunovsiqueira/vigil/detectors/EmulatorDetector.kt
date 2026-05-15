@@ -115,6 +115,11 @@ class EmulatorDetector(
                 BuildCheck(CHECK_BUILD_MANUFACTURER, "Build.MANUFACTURER", Build.MANUFACTURER) {
                     it.equals("Genymotion", ignoreCase = true)
                 },
+                // Build.BOARD is set to "goldfish_$(TARGET_ARCH)" in AOSP
+                // BoardConfigCommon.mk (e.g., "goldfish_arm64", "goldfish_x86_64")
+                BuildCheck(CHECK_BUILD_BOARD, "Build.BOARD", Build.BOARD) {
+                    it.contains("goldfish", ignoreCase = true)
+                },
                 // NOTE: Build.TYPE and Build.TAGS were intentionally excluded.
                 // Google Play emulator images use "user/release-keys" (same as real devices),
                 // making these checks cause false negatives on Play images and false positives
@@ -921,6 +926,7 @@ class EmulatorDetector(
         private const val CHECK_BUILD_MODEL = "build_model"
         private const val CHECK_BUILD_PRODUCT = "build_product"
         private const val CHECK_BUILD_MANUFACTURER = "build_manufacturer"
+        private const val CHECK_BUILD_BOARD = "build_board"
 
         // System properties (Check 2)
         private const val CHECK_SYSPROP_QEMU = "sysprop_ro_kernel_qemu"

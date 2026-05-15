@@ -68,11 +68,19 @@ class CloningDetector : TamperDetector {
                 filesPath.contains(it, ignoreCase = true)
             }
 
-            // Check if the path contains a foreign package name as parent directory
-            // Normal: /data/user/0/io.github.brunovsiqueira.vigil.sample/files
-            // Cloned: /data/data/com.lbe.parallel.intl/parallel_intl/0/io.github.brunovsiqueira.vigil.sample/files
-            val containsForeignPackage = filesPath.contains("/data/data/") &&
-                !filesPath.startsWith("/data/data/$packageName")
+            // Check if the path contains a foreign package name as parent directory.
+            // On Android 7+, /data/data is a symlink to /data/user/0 (see AOSP init.rc).
+            // Both forms are legitimate for user 0. A container running under ANY user
+            // will embed the host's package name in the path.
+            //
+            // Normal user 0:   /data/data/<ownPkg>/files  OR  /data/user/0/<ownPkg>/files
+            // Normal user 10:  /data/user/10/<ownPkg>/files  (work profile — legitimate)
+            // Cloned (user 0): /data/data/<hostPkg>/virtual/.../<ownPkg>/files
+            // Cloned (user N): /data/user/N/<hostPkg>/virtual/.../<ownPkg>/files
+            val containsForeignPackage = DATA_DIR_PREFIXES.any { prefix ->
+                filesPath.contains(prefix) &&
+                    !filesPath.startsWith("$prefix$packageName")
+            }
 
             val suspicious = containsVirtualSegment || containsForeignPackage
 
@@ -485,6 +493,15 @@ class CloningDetector : TamperDetector {
             CHECK_ENV_VARS to 0.7f,
             CHECK_STACK_TRACE to 0.6f,
             CHECK_CLONER_PACKAGES to 0.4f,
+        )
+
+        // Prefixes for app data directories per AOSP installd/utils.cpp.
+        // /data/data/ is a symlink to /data/user/0/ on Android 7+ (init.rc).
+        // /data/user/<N>/ is used for secondary users and work profiles.
+        // /data/user_de/<N>/ is used for device-encrypted (Direct Boot) storage.
+        private val DATA_DIR_PREFIXES = listOf(
+            "/data/data/",
+            "/data/user/0/",
         )
 
         // Legitimate APK installation paths per AOSP.

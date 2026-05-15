@@ -208,7 +208,10 @@ class RootDetector : TamperDetector {
         evidence: MutableList<Evidence>,
         errors: MutableList<DetectionError>,
     ) {
-        // ro.debuggable check — suspicious unless device is userdebug/eng build
+        // ro.debuggable: set to "1" on eng AND userdebug builds
+        // (AOSP build/core/soong_config.mk: filter userdebug eng).
+        // On production "user" builds it's "0". If we see "1" on a "user"
+        // build, the property was manually changed — indicates root.
         SafeExec.runCatching(CHECK_PROP_DEBUGGABLE, name, errors) {
             val debuggable = getSystemProperty("ro.debuggable")
             val buildType = Build.TYPE ?: ""
@@ -407,12 +410,12 @@ class RootDetector : TamperDetector {
 
     // ──────────────────────────────────────────────
     // Check 8: OverlayFS Detection (Native)
-    // Hard signal
+    // Hard signal (on production builds only)
     //
-    // KernelSU uses overlayfs to mount modules into
-    // the app's filesystem view. The mount entries
-    // contain identifiers like "KSU" or reference
-    // /data/adb paths.
+    // KernelSU uses overlayfs to mount modules.
+    // However, AOSP legitimately uses overlayfs on
+    // userdebug/eng builds via "adb remount".
+    // Source: AOSP system/core/fs_mgr/README.overlayfs.md
     // ──────────────────────────────────────────────
 
     private fun checkOverlayFs(
@@ -421,7 +424,13 @@ class RootDetector : TamperDetector {
     ) {
         SafeExec.runCatching(CHECK_OVERLAYFS, name, errors) {
             val result = NativeBridge.detectOverlayFs()
-            val suspicious = result != null
+
+            // On userdebug/eng builds, overlayfs is legitimate (adb remount).
+            // Only flag on production "user" builds.
+            val buildType = Build.TYPE ?: ""
+            val isDevelopmentBuild = buildType.equals("userdebug", ignoreCase = true) ||
+                buildType.equals("eng", ignoreCase = true)
+            val suspicious = result != null && !isDevelopmentBuild
 
             evidence.add(
                 Evidence(
